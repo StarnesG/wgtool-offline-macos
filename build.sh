@@ -2,49 +2,60 @@
 # build.sh  ––  生成静态 wg + 离线包
 set -e
 
+# 版本配置（可根据需要修改）
+WG_TOOLS_VERSION="${WG_TOOLS_VERSION:-v1.0.20210914}"
+WG_GO_VERSION="${WG_GO_VERSION:-0.0.20230223}"
+
+echo "==> 构建配置："
+echo "    wireguard-tools: $WG_TOOLS_VERSION"
+echo "    wireguard-go: $WG_GO_VERSION"
+echo ""
+
 ########## 0. 准备 ##########
 DEST="$PWD/WireGuard-Offline"
 rm -rf "$DEST" wireguard-tools-macos-universal.tar.gz
 mkdir -p "$DEST"/{bin,config,service,scripts}
 
 ########## 1. 拉源码 ##########
-# wireguard-tools
+echo "==> 克隆/更新 wireguard-tools..."
 if [[ ! -d wireguard-tools ]]; then
   git clone https://git.zx2c4.com/wireguard-tools
 fi
 cd wireguard-tools
 git fetch --tags 2>/dev/null || true
-git checkout v1.0.20210914   # 可换最新 tag
+git checkout "$WG_TOOLS_VERSION"
 cd ..
 
-# wireguard-go (macOS 需要用户态实现)
+echo "==> 克隆/更新 wireguard-go..."
 if [[ ! -d wireguard-go ]]; then
   git clone https://git.zx2c4.com/wireguard-go
 fi
 cd wireguard-go
 git fetch --tags 2>/dev/null || true
-git checkout 0.0.20220316   # 稳定版本
+git checkout "$WG_GO_VERSION"
 cd ..
 
 ########## 2. 编译 ##########
-# 编译 wg 和 wg-quick (macOS 不支持 -static，使用动态链接)
+echo "==> 编译 wireguard-tools..."
 cd wireguard-tools
 make -C src clean
 make -C src -j$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
 cd ..
 
-# 编译 wireguard-go
+echo "==> 编译 wireguard-go..."
 cd wireguard-go
 make
 cd ..
 
 ########## 3. 拷二进制 ##########
+echo "==> 拷贝二进制文件..."
 cp wireguard-tools/src/wg "$DEST/bin/"
 cp wireguard-tools/src/wg-quick/darwin.bash "$DEST/bin/wg-quick"
 cp wireguard-go/wireguard-go "$DEST/bin/"
 chmod +x "$DEST/bin/"*
 
 ########## 4. 生成脚本 ##########
+echo "==> 生成配置脚本..."
 # ① 启停脚本
 cat > "$DEST/scripts/wg-control.sh" <<'EOF'
 #!/bin/bash
@@ -113,7 +124,19 @@ EOF
 chmod +x "$DEST/uninstall.sh"
 
 ########## 5. 打包 ##########
+echo "==> 打包..."
 tar -czf wireguard-tools-macos-universal.tar.gz WireGuard-Offline/
-echo ">>> 离线包已生成：wireguard-tools-macos-universal.tar.gz"
-echo ">>> 包含文件："
-tar -tzf wireguard-tools-macos-universal.tar.gz | head -20 
+
+echo ""
+echo "✅ 离线包已生成：wireguard-tools-macos-universal.tar.gz"
+echo ""
+echo "包含文件："
+tar -tzf wireguard-tools-macos-universal.tar.gz | head -20
+echo ""
+echo "版本信息："
+echo "  wireguard-tools: $WG_TOOLS_VERSION"
+echo "  wireguard-go: $WG_GO_VERSION"
+echo ""
+echo "使用方法："
+echo "  1. 将 wireguard-tools-macos-universal.tar.gz 和 install.sh 复制到目标机器"
+echo "  2. 运行: sudo ./install.sh" 

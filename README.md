@@ -18,7 +18,9 @@
 - macOS 系统（支持 Intel 和 Apple Silicon）
 - 已安装 Xcode Command Line Tools: `xcode-select --install`
 - 已安装 Git
-- 已安装 Go 编译器（用于编译 wireguard-go）
+- 已安装 Go 编译器 1.18+ （用于编译 wireguard-go）
+  - 检查版本：`go version`
+  - 安装：`brew install go` 或从 [golang.org](https://golang.org/dl/) 下载
 
 ### 构建步骤
 
@@ -30,19 +32,45 @@ cd wgtool-offline-macos
 # 2. 执行构建脚本
 chmod +x build.sh
 ./build.sh
+
+# 3. （可选）指定版本构建
+WG_TOOLS_VERSION=v1.0.20210914 WG_GO_VERSION=0.0.20230223 ./build.sh
+
+# 4. （可选）使用最新版本
+WG_GO_VERSION=0.0.20250522 ./build.sh
 ```
 
 构建完成后会生成 `wireguard-tools-macos-universal.tar.gz` 离线安装包。
+
+**注意**：如果构建时遇到网络问题（无法下载 Go 依赖），需要配置代理：
+
+```bash
+# 设置代理（根据实际情况修改）
+export https_proxy=http://127.0.0.1:7890
+export http_proxy=http://127.0.0.1:7890
+export all_proxy=socks5://127.0.0.1:7890
+
+# 或使用 Go 代理
+export GOPROXY=https://goproxy.cn,direct
+
+# 然后执行构建
+./build.sh
+```
 
 ### 构建过程说明
 
 脚本会自动完成以下操作：
 
 1. 克隆 wireguard-tools 和 wireguard-go 源码
-2. 检出稳定版本标签（wireguard-tools v1.0.20210914，wireguard-go 0.0.20220316）
-3. 编译二进制文件
+2. 检出稳定版本标签（默认：wireguard-tools v1.0.20210914，wireguard-go 0.0.20230223）
+3. 编译二进制文件（wg、wg-quick、wireguard-go）
 4. 生成启停脚本和 launchd 服务配置
 5. 打包成 tar.gz 压缩包
+
+**版本说明**：
+- wireguard-tools v1.0.20210914 是稳定的命令行工具版本
+- wireguard-go 0.0.20230223 兼容现代 Go 版本（Go 1.18+）
+- 可通过环境变量 `WG_TOOLS_VERSION` 和 `WG_GO_VERSION` 自定义版本
 
 ## 安装使用
 
@@ -230,6 +258,43 @@ sudo rm -rf /usr/local/etc/wireguard
 
 ## 故障排查
 
+### 构建失败
+
+#### Go 依赖下载超时
+
+**症状**：构建时出现 `dial tcp xxx:443: i/o timeout` 错误
+
+**解决方案**：
+```bash
+# 方案 1：使用国内 Go 代理
+export GOPROXY=https://goproxy.cn,direct
+./build.sh
+
+# 方案 2：配置网络代理
+export https_proxy=http://127.0.0.1:7890
+export http_proxy=http://127.0.0.1:7890
+./build.sh
+```
+
+#### wireguard-go 编译错误
+
+**症状**：`invalid reference to syscall.recvmsg` 或其他链接错误
+
+**原因**：wireguard-go 版本与 Go 编译器版本不兼容
+
+**解决方案**：
+```bash
+# 检查 Go 版本
+go version
+
+# 使用兼容的 wireguard-go 版本
+# Go 1.18-1.20: 使用 0.0.20230223
+WG_GO_VERSION=0.0.20230223 ./build.sh
+
+# Go 1.21+: 使用最新版本
+WG_GO_VERSION=0.0.20250522 ./build.sh
+```
+
 ### 隧道无法启动
 
 1. 检查配置文件语法：
@@ -306,7 +371,17 @@ A: 可以，创建多个配置文件（如 wg0.conf、wg1.conf）并分别启动
 
 ### Q: 如何更新到最新版本？
 
-A: 重新运行 build.sh 构建最新版本，然后重新安装。可以修改 build.sh 中的版本标签。
+A: 重新运行 build.sh 构建最新版本，然后重新安装：
+
+```bash
+# 更新到最新版本
+cd wgtool-offline-macos
+git pull
+WG_TOOLS_VERSION=v1.0.20250521 WG_GO_VERSION=0.0.20250522 ./build.sh
+
+# 在目标机器上重新安装
+sudo ./install.sh
+```
 
 ### Q: 离线包可以在其他 Mac 上使用吗？
 
@@ -314,10 +389,37 @@ A: 可以，但需要确保目标机器的 macOS 版本和架构兼容。
 
 ## 版本信息
 
+**默认版本**：
 - wireguard-tools: v1.0.20210914
-- wireguard-go: 0.0.20220316
+- wireguard-go: 0.0.20230223
 
-可在 `build.sh` 中修改版本标签以使用其他版本。
+**可用版本**：
+
+wireguard-tools:
+- v1.0.20250521 (最新)
+- v1.0.20210914 (稳定，推荐)
+- v1.0.20210424
+
+wireguard-go:
+- 0.0.20250522 (最新，需要 Go 1.21+)
+- 0.0.20230223 (稳定，兼容 Go 1.18+，推荐)
+- 0.0.20220316 (旧版本，可能不兼容新 Go)
+
+**自定义版本**：
+
+```bash
+# 使用环境变量指定版本
+WG_TOOLS_VERSION=v1.0.20250521 WG_GO_VERSION=0.0.20250522 ./build.sh
+
+# 或编辑 build.sh 文件，修改以下行：
+# WG_TOOLS_VERSION="${WG_TOOLS_VERSION:-v1.0.20210914}"
+# WG_GO_VERSION="${WG_GO_VERSION:-0.0.20230223}"
+```
+
+**版本兼容性**：
+- Go 1.18-1.20: 推荐 wireguard-go 0.0.20230223
+- Go 1.21+: 可使用 wireguard-go 0.0.20250522
+- macOS 10.14+: 所有版本均支持
 
 ## 参考资料
 

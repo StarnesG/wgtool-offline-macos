@@ -1,0 +1,42 @@
+wgtool-offline-macos/
+├── build.sh                      # 构建脚本（主要脚本）
+├── install.sh                    # 安装脚本（目标机器使用）
+├── wg-control.sh                 # 控制脚本（参考模板）
+├── README.md                     # 完整使用文档（9.7K）
+├── QUICKSTART.md                 # 快速开始指南（3.1K）
+├── VERSION_COMPATIBILITY.md      # 版本兼容性说明（3.2K）
+├── CHANGELOG.md                  # 更新日志（2.9K）
+├── .gitignore                    # Git 忽略文件
+│
+├── wireguard-tools/              # 构建时克隆（不提交）
+├── wireguard-go/                 # 构建时克隆（不提交）
+├── WireGuard-Offline/            # 构建产物目录（不提交）
+└── wireguard-tools-macos-universal.tar.gz  # 最终离线包（不提交）
+
+构建后的离线包结构：
+WireGuard-Offline/
+├── bin/
+│   ├── wg                        # WireGuard 命令行工具
+│   ├── wg-quick                  # 快速启停脚本
+│   └── wireguard-go              # 用户态实现
+├── scripts/
+│   └── wg-control.sh             # 启停控制脚本
+├── service/
+│   └── com.wireguard.offline.plist  # launchd 服务配置
+└── uninstall.sh                  # 卸载脚本
+
+安装后的系统文件：
+/usr/local/bin/
+├── wg
+├── wg-quick
+├── wireguard-go
+└── wg-uninstall
+
+/usr/local/scripts/
+└── wg-control.sh
+
+/usr/local/etc/wireguard/
+└── wg0.conf                      # 用户配置文件
+
+/Library/LaunchDaemons/
+└── com.wireguard.offline.plist   # 自启服务（可选）
