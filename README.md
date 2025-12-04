@@ -2,6 +2,17 @@
 
 将 WireGuard 命令行工具（wg、wg-quick）和 wireguard-go 打包成离线安装包，用于无网络或受限网络环境的 macOS 系统。
 
+## 重要提示
+
+⚠️ **macOS Bash 版本问题**：macOS 默认使用 Bash 3.2，但 wg-quick 需要 Bash 4+。
+
+**推荐使用控制脚本**（无需安装额外软件）：
+```bash
+sudo /usr/local/scripts/wg-control.sh up
+```
+
+详细解决方案请参考：[BASH_VERSION_FIX.md](BASH_VERSION_FIX.md)
+
 ## 项目说明
 
 本项目基于官方 [wireguard-tools](https://git.zx2c4.com/wireguard-tools/) 和 [wireguard-go](https://git.zx2c4.com/wireguard-go/)，提供：
@@ -159,7 +170,9 @@ sudo cat /usr/local/etc/wireguard/publickey
 
 ## 启停管理
 
-### 使用控制脚本
+### 使用控制脚本（推荐）
+
+控制脚本会自动处理 Bash 版本问题，推荐使用：
 
 ```bash
 # 启动隧道（默认 wg0）
@@ -173,16 +186,45 @@ sudo /usr/local/scripts/wg-control.sh down
 
 # 重启隧道
 sudo /usr/local/scripts/wg-control.sh restart
+
+# 查看状态
+sudo /usr/local/scripts/wg-control.sh status
 ```
 
 ### 使用 wg-quick 命令
 
-```bash
-# 启动
-sudo WG_QUICK_USERSPACE_IMPLEMENTATION=wireguard-go wg-quick up wg0
+**注意**：macOS 默认使用 Bash 3.2，但 wg-quick 需要 Bash 4+。
 
-# 停止
-sudo WG_QUICK_USERSPACE_IMPLEMENTATION=wireguard-go wg-quick down wg0
+**方案 1：使用包装脚本（已自动配置）**
+
+```bash
+# wg-quick 包装脚本会自动查找合适的 Bash 版本
+sudo wg-quick up wg0
+sudo wg-quick down wg0
+```
+
+**方案 2：安装 Bash 4+**
+
+```bash
+# 使用 Homebrew 安装
+brew install bash
+
+# 验证版本
+/usr/local/bin/bash --version  # Intel Mac
+/opt/homebrew/bin/bash --version  # Apple Silicon
+
+# 然后可以直接使用 wg-quick
+sudo wg-quick up wg0
+```
+
+**方案 3：手动指定 Bash（如果已安装）**
+
+```bash
+# Intel Mac
+sudo /usr/local/bin/bash /usr/local/bin/wg-quick.bash up wg0
+
+# Apple Silicon
+sudo /opt/homebrew/bin/bash /usr/local/bin/wg-quick.bash up wg0
 ```
 
 ### 查看状态
@@ -257,6 +299,39 @@ sudo rm -rf /usr/local/etc/wireguard
 ```
 
 ## 故障排查
+
+### Bash 版本问题
+
+#### wg-quick: Version mismatch: bash 3 detected
+
+**症状**：运行 `wg-quick` 时提示 Bash 版本不匹配
+
+**原因**：macOS 默认使用 Bash 3.2，但 wg-quick 需要 Bash 4+
+
+**解决方案**：
+
+**方案 1：使用控制脚本（推荐，无需安装）**
+```bash
+sudo /usr/local/scripts/wg-control.sh up
+```
+
+**方案 2：安装 Bash 4+**
+```bash
+# 安装 Homebrew（如果未安装）
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# 安装新版 Bash
+brew install bash
+
+# 验证
+bash --version  # 应该显示 5.x
+```
+
+**方案 3：使用包装脚本**
+```bash
+# wg-quick 包装脚本会自动查找 Bash 4+
+sudo wg-quick up wg0
+```
 
 ### 构建失败
 

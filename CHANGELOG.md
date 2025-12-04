@@ -1,6 +1,48 @@
 # 更新日志
 
-## 2024-12-04 - 修复版本
+## 2024-12-04 v2 - Bash 版本兼容性修复
+
+### 修复的问题
+
+7. **Bash 版本不兼容** ✅
+   - 问题：macOS 默认 Bash 3.2，wg-quick 需要 Bash 4+
+   - 错误：`wg-quick: Version mismatch: bash 3 detected`
+   - 解决：创建智能包装脚本，自动查找合适的 Bash 版本
+
+### 新增功能
+
+5. **wg-quick 包装脚本** ✅
+   - 自动检测并使用 Bash 4+ 版本
+   - 支持 Homebrew Bash（Intel 和 Apple Silicon）
+   - 提供友好的错误提示和解决方案
+
+6. **改进的控制脚本** ✅
+   - 使用 `/bin/sh` 而不是 bash，完全兼容 macOS
+   - 添加 `status` 命令查看隧道状态
+   - 改进错误处理和用户提示
+   - 自动查找可用的 Bash 版本
+
+7. **Bash 版本问题文档** ✅
+   - 添加 BASH_VERSION_FIX.md - 详细的问题说明和解决方案
+   - 更新 README.md 和 QUICKSTART.md 的相关说明
+   - 提供多种解决方案对比
+
+### 使用建议
+
+**推荐方式**（无需安装 Bash 4+）：
+```bash
+sudo /usr/local/scripts/wg-control.sh up
+```
+
+**可选方式**（需要安装 Bash 4+）：
+```bash
+brew install bash
+sudo wg-quick up wg0
+```
+
+---
+
+## 2024-12-04 v1 - 初始修复版本
 
 ### 修复的问题
 
