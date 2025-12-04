@@ -1,0 +1,23 @@
+# 构建产物
+wireguard-tools/
+wireguard-go/
+WireGuard-Offline/
+*.tar.gz
+*.tar.xz
+*.zip
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# 临时文件
+*.log
+*.tmp
+*~
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
