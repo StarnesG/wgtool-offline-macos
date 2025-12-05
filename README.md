@@ -4,14 +4,14 @@
 
 ## 重要提示
 
-⚠️ **macOS Bash 版本问题**：macOS 默认使用 Bash 3.2，但 wg-quick 需要 Bash 4+。
+✅ **完全兼容 macOS Bash 3.2**：本项目的控制脚本使用纯 POSIX shell 实现，**不依赖 wg-quick**，无需安装 Bash 4+。
 
-**推荐使用控制脚本**（无需安装额外软件）：
+**推荐使用控制脚本**（开箱即用）：
 ```bash
 sudo /usr/local/scripts/wg-control.sh up
 ```
 
-详细解决方案请参考：[BASH_VERSION_FIX.md](BASH_VERSION_FIX.md)
+控制脚本直接调用 `wg` 和 `wireguard-go`，实现了 wg-quick 的核心功能，完全兼容 macOS 默认环境。
 
 ## 项目说明
 
@@ -170,9 +170,9 @@ sudo cat /usr/local/etc/wireguard/publickey
 
 ## 启停管理
 
-### 使用控制脚本（推荐）
+### 使用控制脚本（推荐，无需 Bash 4+）
 
-控制脚本会自动处理 Bash 版本问题，推荐使用：
+控制脚本使用纯 POSIX shell 实现，**不依赖 wg-quick**，完全兼容 macOS Bash 3.2：
 
 ```bash
 # 启动隧道（默认 wg0）
@@ -191,40 +191,22 @@ sudo /usr/local/scripts/wg-control.sh restart
 sudo /usr/local/scripts/wg-control.sh status
 ```
 
-### 使用 wg-quick 命令
+### 使用 wg-quick 命令（可选）
 
-**注意**：macOS 默认使用 Bash 3.2，但 wg-quick 需要 Bash 4+。
+**注意**：wg-quick 需要 Bash 4+，但 macOS 默认使用 Bash 3.2。**推荐使用控制脚本**，无需安装额外软件。
 
-**方案 1：使用包装脚本（已自动配置）**
-
-```bash
-# wg-quick 包装脚本会自动查找合适的 Bash 版本
-sudo wg-quick up wg0
-sudo wg-quick down wg0
-```
-
-**方案 2：安装 Bash 4+**
+如果确实需要使用 wg-quick，需要先安装 Bash 4+：
 
 ```bash
-# 使用 Homebrew 安装
+# 安装 Homebrew Bash
 brew install bash
 
 # 验证版本
-/usr/local/bin/bash --version  # Intel Mac
-/opt/homebrew/bin/bash --version  # Apple Silicon
+bash --version  # 应该显示 5.x
 
-# 然后可以直接使用 wg-quick
+# 使用 wg-quick
 sudo wg-quick up wg0
-```
-
-**方案 3：手动指定 Bash（如果已安装）**
-
-```bash
-# Intel Mac
-sudo /usr/local/bin/bash /usr/local/bin/wg-quick.bash up wg0
-
-# Apple Silicon
-sudo /opt/homebrew/bin/bash /usr/local/bin/wg-quick.bash up wg0
+sudo wg-quick down wg0
 ```
 
 ### 查看状态

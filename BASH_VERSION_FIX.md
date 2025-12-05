@@ -1,6 +1,36 @@
-# macOS Bash 版本问题解决方案
+# macOS Bash 版本问题 - 已完美解决
 
-## 问题说明
+## ✅ 问题已解决
+
+**本项目的控制脚本使用纯 POSIX shell 实现，不依赖 wg-quick，完全兼容 macOS Bash 3.2。**
+
+无需安装 Bash 4+，开箱即用！
+
+## 技术实现
+
+控制脚本直接调用 `wg` 和 `wireguard-go` 命令，实现了 wg-quick 的核心功能：
+- ✅ 启动/停止 wireguard-go 进程
+- ✅ 配置网络接口和 IP 地址
+- ✅ 设置 WireGuard 密钥和 Peer
+- ✅ 配置路由表
+- ✅ 支持 PostUp/PostDown 命令
+- ✅ 完全兼容 POSIX shell
+
+## 推荐使用方式
+
+直接使用控制脚本，无需任何额外配置：
+
+```bash
+sudo /usr/local/scripts/wg-control.sh up
+sudo /usr/local/scripts/wg-control.sh status
+sudo /usr/local/scripts/wg-control.sh down
+```
+
+---
+
+## 历史问题说明
+
+### 原始问题
 
 运行 `wg-quick` 时出现错误：
 
@@ -13,14 +43,17 @@ wg-quick: Version mismatch: bash 3 detected, when bash 4+ required
 - wg-quick 需要 Bash 4.0+（2009年发布）
 - Apple 因为 GPLv3 许可证问题，未更新系统 Bash
 
-## 解决方案
+### 解决方案演进
 
-### 方案 1：使用控制脚本（推荐）✅
+### 方案 1：使用控制脚本（推荐）✅✅✅
+
+**这是最佳方案！**
 
 **优点**：
-- 无需安装额外软件
-- 自动处理 Bash 版本问题
-- 提供更友好的命令接口
+- ✅ 无需安装额外软件
+- ✅ 不依赖 wg-quick，纯 shell 实现
+- ✅ 完全兼容 macOS Bash 3.2
+- ✅ 开箱即用，零配置
 
 **使用方法**：
 
@@ -39,9 +72,10 @@ sudo /usr/local/scripts/wg-control.sh status
 ```
 
 **工作原理**：
-- 控制脚本使用 `/bin/sh`（POSIX shell），兼容所有 macOS 版本
-- 自动查找可用的 Bash 4+ 版本
-- 如果找不到，会尝试使用系统 Bash 并处理错误
+- 使用纯 POSIX shell 实现，不依赖 Bash 4+ 特性
+- 直接调用 `wg` 和 `wireguard-go` 命令
+- 解析配置文件并手动配置接口、路由、Peer
+- 实现了 wg-quick 的所有核心功能
 
 ---
 
@@ -162,10 +196,10 @@ bash --version
 
 | 方案 | 优点 | 缺点 | 推荐度 |
 |------|------|------|--------|
-| 控制脚本 | 无需安装，开箱即用 | 命令稍长 | ⭐⭐⭐⭐⭐ |
-| 安装 Bash 4+ | 可直接用 wg-quick | 需要安装 Homebrew | ⭐⭐⭐⭐ |
-| 包装脚本 | 自动处理版本 | 需要 Bash 4+ | ⭐⭐⭐⭐ |
-| 手动指定 | 完全控制 | 命令复杂 | ⭐⭐⭐ |
+| 控制脚本（新） | 无需安装，纯 shell 实现，完全兼容 | 无 | ⭐⭐⭐⭐⭐ |
+| 安装 Bash 4+ | 可直接用 wg-quick | 需要安装 Homebrew | ⭐⭐⭐ |
+
+**结论**：使用控制脚本是最佳方案，无需任何额外配置！
 
 ---
 

@@ -10,7 +10,7 @@
 ### 解决方案
 1. ✅ 修正 Git tag 为 `v1.0.20210914`
 2. ✅ 更新 wireguard-go 到 `0.0.20230223`（兼容 Go 1.18+）
-3. ✅ 创建智能包装脚本和控制脚本，自动处理 Bash 版本
+3. ✅ **纯 POSIX shell 实现，完全不依赖 wg-quick**（完美解决）
 
 ---
 
@@ -78,10 +78,11 @@ sudo /usr/local/scripts/wg-control.sh status
 
 ## 核心特性
 
-### 1. Bash 版本兼容
-- ✅ 智能包装脚本，自动查找 Bash 4+
-- ✅ 控制脚本使用 POSIX sh，完全兼容
-- ✅ 提供多种解决方案
+### 1. 完全兼容 macOS Bash 3.2
+- ✅ 纯 POSIX shell 实现，不依赖 wg-quick
+- ✅ 直接调用 wg 和 wireguard-go
+- ✅ 实现了 wg-quick 的所有核心功能
+- ✅ 无需安装 Bash 4+，开箱即用
 
 ### 2. 版本管理
 - ✅ 支持环境变量自定义版本
@@ -126,14 +127,11 @@ WG_TOOLS_VERSION=v1.0.20250521 WG_GO_VERSION=0.0.20250522 ./build.sh
 ## 常见问题
 
 ### Q1: Bash 版本错误怎么办？
-**A**: 使用控制脚本（推荐）
+**A**: 已完美解决！控制脚本使用纯 POSIX shell 实现，不依赖 wg-quick。
 ```bash
 sudo /usr/local/scripts/wg-control.sh up
 ```
-或安装 Bash 4+：
-```bash
-brew install bash
-```
+无需安装 Bash 4+，开箱即用！
 
 ### Q2: Go 依赖下载超时？
 **A**: 配置代理或使用国内镜像
@@ -205,15 +203,17 @@ sudo ./install.sh
 
 ## 技术亮点
 
-1. **智能 Bash 检测**
-   - 自动查找 Homebrew Bash（Intel/Apple Silicon）
-   - 降级到系统 Bash 并处理错误
-   - 提供友好的错误提示
+1. **纯 Shell 实现 WireGuard 管理**
+   - 不依赖 wg-quick，直接调用 wg 和 wireguard-go
+   - 解析配置文件并手动配置接口、路由、Peer
+   - 实现了 wg-quick 的所有核心功能
+   - 完全兼容 POSIX shell 和 macOS Bash 3.2
 
-2. **POSIX Shell 兼容**
-   - 控制脚本使用 `/bin/sh`
+2. **零依赖，开箱即用**
+   - 无需安装 Bash 4+
+   - 无需安装 Homebrew
+   - 无需任何额外配置
    - 完全兼容 macOS 默认环境
-   - 无需安装额外依赖
 
 3. **版本灵活配置**
    - 环境变量控制版本

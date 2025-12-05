@@ -83,7 +83,7 @@ sudo chmod 600 /usr/local/etc/wireguard/wg0.conf
 ### 3. 启动
 
 ```bash
-# 启动隧道（推荐使用控制脚本）
+# 启动隧道（使用控制脚本，兼容 Bash 3.2）
 sudo /usr/local/scripts/wg-control.sh up
 
 # 查看状态
@@ -95,7 +95,7 @@ sudo wg
 sudo /usr/local/scripts/wg-control.sh down
 ```
 
-**注意**：macOS 默认 Bash 是 3.2，wg-quick 需要 Bash 4+。控制脚本会自动处理此问题。
+**✅ 完全兼容**：控制脚本使用纯 POSIX shell 实现，不依赖 wg-quick，无需安装 Bash 4+。
 
 ---
 
@@ -126,18 +126,16 @@ sudo wg-uninstall
 
 ## 故障排查
 
-### Bash 版本错误
+### Bash 版本问题
 
-**错误**：`wg-quick: Version mismatch: bash 3 detected`
+**✅ 已解决**：控制脚本使用纯 POSIX shell 实现，不依赖 wg-quick。
 
-**解决**：
+**直接使用**：
 ```bash
-# 方案 1：使用控制脚本（推荐）
 sudo /usr/local/scripts/wg-control.sh up
-
-# 方案 2：安装 Bash 4+
-brew install bash
 ```
+
+无需安装 Bash 4+！
 
 ### 构建失败：Go 依赖下载超时
 

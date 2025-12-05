@@ -129,15 +129,21 @@ chmod +x "$DEST/bin/"*
 
 ########## 4. 生成脚本 ##########
 echo "==> 生成配置脚本..."
-# ① 启停脚本
+echo "    注意：控制脚本使用纯 POSIX shell 实现，不依赖 wg-quick"
+echo "    兼容 macOS Bash 3.2，无需安装 Bash 4+"
+# ① 启停脚本（纯 POSIX shell 实现，不依赖 wg-quick）
 cat > "$DEST/scripts/wg-control.sh" <<'EOF'
 #!/bin/sh
 # wg-control.sh - WireGuard 启停控制脚本
-# 使用 sh 而不是 bash，兼容 macOS 默认环境
+# 纯 POSIX shell 实现，不依赖 wg-quick，兼容 macOS Bash 3.2
+
+set -e
 
 CONF_DIR="/usr/local/etc/wireguard"
 IFACE="${2:-wg0}"
 CONF="$CONF_DIR/$IFACE.conf"
+WG="/usr/local/bin/wg"
+WIREGUARD_GO="/usr/local/bin/wireguard-go"
 
 # 检查是否以 root 运行
 if [ "$(id -u)" -ne 0 ]; then
@@ -155,60 +161,231 @@ check_config() {
     fi
 }
 
-# 查找合适的 Bash（用于 wg-quick）
-find_bash() {
-    for bash_path in /opt/homebrew/bin/bash /usr/local/bin/bash /bin/bash; do
-        if [ -x "$bash_path" ]; then
-            local version=$("$bash_path" --version 2>/dev/null | head -n1 | sed 's/.*version \([0-9]\).*/\1/')
-            if [ "$version" -ge 4 ] 2>/dev/null; then
-                echo "$bash_path"
-                return 0
-            fi
+# 解析配置文件
+parse_config() {
+    # 提取 Interface 部分的配置
+    PRIVATE_KEY=$(awk '/^\[Interface\]/,/^\[/ {if(/^PrivateKey/) print $3}' "$CONF" | head -1)
+    ADDRESS=$(awk '/^\[Interface\]/,/^\[/ {if(/^Address/) print $3}' "$CONF" | head -1)
+    LISTEN_PORT=$(awk '/^\[Interface\]/,/^\[/ {if(/^ListenPort/) print $3}' "$CONF" | head -1)
+    DNS=$(awk '/^\[Interface\]/,/^\[/ {if(/^DNS/) print $3}' "$CONF" | head -1)
+    MTU=$(awk '/^\[Interface\]/,/^\[/ {if(/^MTU/) print $3}' "$CONF" | head -1)
+    
+    # 提取 PostUp/PostDown 命令
+    POST_UP=$(awk '/^\[Interface\]/,/^\[/ {if(/^PostUp/) {sub(/^PostUp[[:space:]]*=[[:space:]]*/, ""); print}}' "$CONF")
+    POST_DOWN=$(awk '/^\[Interface\]/,/^\[/ {if(/^PostDown/) {sub(/^PostDown[[:space:]]*=[[:space:]]*/, ""); print}}' "$CONF")
+}
+
+# 启动 wireguard-go
+start_wireguard_go() {
+    echo "启动 wireguard-go..."
+    
+    # 检查是否已经运行
+    if pgrep -f "wireguard-go $IFACE" >/dev/null 2>&1; then
+        echo "wireguard-go 已在运行"
+        return 0
+    fi
+    
+    # 启动 wireguard-go（后台运行）
+    "$WIREGUARD_GO" "$IFACE" >/dev/null 2>&1 &
+    
+    # 等待接口创建
+    local count=0
+    while [ $count -lt 10 ]; do
+        if ifconfig "$IFACE" >/dev/null 2>&1; then
+            echo "接口 $IFACE 已创建"
+            return 0
         fi
+        sleep 0.5
+        count=$((count + 1))
     done
+    
+    echo "错误：接口创建超时" >&2
     return 1
 }
 
-# 启动隧道
-do_up() {
-    check_config
-    echo "启动 WireGuard 隧道: $IFACE"
+# 配置接口
+configure_interface() {
+    echo "配置接口 $IFACE..."
     
-    BASH_BIN=$(find_bash)
-    if [ -z "$BASH_BIN" ]; then
-        echo "警告：未找到 Bash 4+，尝试使用系统 Bash" >&2
-        BASH_BIN="/bin/bash"
+    parse_config
+    
+    # 设置私钥
+    if [ -n "$PRIVATE_KEY" ]; then
+        echo "$PRIVATE_KEY" | "$WG" set "$IFACE" private-key /dev/stdin
+    else
+        echo "错误：配置文件中未找到 PrivateKey" >&2
+        return 1
     fi
     
-    WG_QUICK_USERSPACE_IMPLEMENTATION=wireguard-go \
-        "$BASH_BIN" /usr/local/bin/wg-quick.bash up "$CONF"
+    # 设置监听端口
+    if [ -n "$LISTEN_PORT" ]; then
+        "$WG" set "$IFACE" listen-port "$LISTEN_PORT"
+    fi
+    
+    # 配置 IP 地址
+    if [ -n "$ADDRESS" ]; then
+        # 处理多个地址（用逗号分隔）
+        echo "$ADDRESS" | tr ',' '\n' | while read -r addr; do
+            addr=$(echo "$addr" | tr -d ' ')
+            if [ -n "$addr" ]; then
+                echo "设置地址: $addr"
+                ifconfig "$IFACE" inet "$addr" "$addr" alias 2>/dev/null || \
+                ifconfig "$IFACE" "$addr" up
+            fi
+        done
+    fi
+    
+    # 设置 MTU
+    if [ -n "$MTU" ]; then
+        ifconfig "$IFACE" mtu "$MTU"
+    fi
+    
+    # 配置 Peer
+    configure_peers
+    
+    # 启动接口
+    ifconfig "$IFACE" up
+    
+    # 配置路由
+    configure_routes
+    
+    # 配置 DNS
+    if [ -n "$DNS" ]; then
+        configure_dns
+    fi
+    
+    # 执行 PostUp 命令
+    if [ -n "$POST_UP" ]; then
+        echo "执行 PostUp 命令..."
+        eval "$POST_UP"
+    fi
+}
+
+# 配置 Peer
+configure_peers() {
+    # 提取所有 Peer 配置
+    awk '/^\[Peer\]/ {peer=1; next} 
+         /^\[/ {peer=0} 
+         peer && /^[A-Za-z]/ {print}' "$CONF" | \
+    while IFS= read -r line; do
+        case "$line" in
+            PublicKey*)
+                PEER_KEY=$(echo "$line" | awk '{print $3}')
+                ;;
+            Endpoint*)
+                ENDPOINT=$(echo "$line" | awk '{print $3}')
+                ;;
+            AllowedIPs*)
+                ALLOWED_IPS=$(echo "$line" | cut -d'=' -f2 | tr -d ' ')
+                ;;
+            PersistentKeepalive*)
+                KEEPALIVE=$(echo "$line" | awk '{print $3}')
+                ;;
+            PresharedKey*)
+                PRESHARED=$(echo "$line" | awk '{print $3}')
+                ;;
+        esac
+        
+        # 当读取到下一个 Peer 或文件结束时，配置当前 Peer
+        if [ -n "$PEER_KEY" ] && [ -n "$ALLOWED_IPS" ]; then
+            echo "配置 Peer: $PEER_KEY"
+            
+            CMD="$WG set $IFACE peer $PEER_KEY"
+            [ -n "$ENDPOINT" ] && CMD="$CMD endpoint $ENDPOINT"
+            [ -n "$ALLOWED_IPS" ] && CMD="$CMD allowed-ips $ALLOWED_IPS"
+            [ -n "$KEEPALIVE" ] && CMD="$CMD persistent-keepalive $KEEPALIVE"
+            [ -n "$PRESHARED" ] && echo "$PRESHARED" | $WG set "$IFACE" peer "$PEER_KEY" preshared-key /dev/stdin
+            
+            eval "$CMD"
+            
+            # 重置变量
+            PEER_KEY=""
+            ENDPOINT=""
+            ALLOWED_IPS=""
+            KEEPALIVE=""
+            PRESHARED=""
+        fi
+    done
+}
+
+# 配置路由
+configure_routes() {
+    echo "配置路由..."
+    
+    # 从配置中提取 AllowedIPs 并添加路由
+    awk '/^\[Peer\]/,/^\[/ {if(/^AllowedIPs/) print $3}' "$CONF" | tr ',' '\n' | while read -r ip; do
+        ip=$(echo "$ip" | tr -d ' ')
+        if [ -n "$ip" ]; then
+            # 检查是否是默认路由
+            if [ "$ip" = "0.0.0.0/0" ]; then
+                echo "配置默认路由..."
+                # 保存原默认网关
+                DEFAULT_GW=$(route -n get default 2>/dev/null | awk '/gateway:/ {print $2}')
+                if [ -n "$DEFAULT_GW" ]; then
+                    # 添加到 VPN 服务器的路由（通过原网关）
+                    ENDPOINT_IP=$(awk '/^\[Peer\]/,/^\[/ {if(/^Endpoint/) print $3}' "$CONF" | head -1 | cut -d: -f1)
+                    if [ -n "$ENDPOINT_IP" ]; then
+                        route add "$ENDPOINT_IP" "$DEFAULT_GW" 2>/dev/null || true
+                    fi
+                    # 添加默认路由到 VPN
+                    route add -net 0.0.0.0/1 -interface "$IFACE" 2>/dev/null || true
+                    route add -net 128.0.0.0/1 -interface "$IFACE" 2>/dev/null || true
+                fi
+            else
+                echo "添加路由: $ip"
+                route add -net "$ip" -interface "$IFACE" 2>/dev/null || true
+            fi
+        fi
+    done
+}
+
+# 配置 DNS
+configure_dns() {
+    echo "配置 DNS: $DNS"
+    # macOS DNS 配置比较复杂，这里提供基本实现
+    # 实际使用中可能需要使用 networksetup 或 scutil
+    echo "注意：DNS 配置需要手动设置或使用 networksetup 命令"
 }
 
 # 停止隧道
-do_down() {
+stop_tunnel() {
     echo "停止 WireGuard 隧道: $IFACE"
     
-    BASH_BIN=$(find_bash)
-    if [ -z "$BASH_BIN" ]; then
-        BASH_BIN="/bin/bash"
+    # 执行 PostDown 命令
+    if [ -f "$CONF" ]; then
+        POST_DOWN=$(awk '/^\[Interface\]/,/^\[/ {if(/^PostDown/) {sub(/^PostDown[[:space:]]*=[[:space:]]*/, ""); print}}' "$CONF")
+        if [ -n "$POST_DOWN" ]; then
+            echo "执行 PostDown 命令..."
+            eval "$POST_DOWN" 2>/dev/null || true
+        fi
     fi
     
-    WG_QUICK_USERSPACE_IMPLEMENTATION=wireguard-go \
-        "$BASH_BIN" /usr/local/bin/wg-quick.bash down "$CONF" 2>/dev/null || true
-}
-
-# 重启隧道
-do_restart() {
-    do_down
-    sleep 1
-    do_up
+    # 删除路由
+    awk '/^\[Peer\]/,/^\[/ {if(/^AllowedIPs/) print $3}' "$CONF" 2>/dev/null | tr ',' '\n' | while read -r ip; do
+        ip=$(echo "$ip" | tr -d ' ')
+        if [ -n "$ip" ] && [ "$ip" != "0.0.0.0/0" ]; then
+            route delete -net "$ip" 2>/dev/null || true
+        fi
+    done
+    
+    # 删除默认路由
+    route delete -net 0.0.0.0/1 2>/dev/null || true
+    route delete -net 128.0.0.0/1 2>/dev/null || true
+    
+    # 关闭接口
+    ifconfig "$IFACE" down 2>/dev/null || true
+    
+    # 停止 wireguard-go
+    pkill -f "wireguard-go $IFACE" 2>/dev/null || true
+    
+    echo "隧道已停止"
 }
 
 # 显示状态
-do_status() {
-    if /usr/local/bin/wg show "$IFACE" >/dev/null 2>&1; then
+show_status() {
+    if "$WG" show "$IFACE" >/dev/null 2>&1; then
         echo "WireGuard 隧道 $IFACE 状态:"
-        /usr/local/bin/wg show "$IFACE"
+        "$WG" show "$IFACE"
     else
         echo "WireGuard 隧道 $IFACE 未运行"
         exit 1
@@ -218,16 +395,26 @@ do_status() {
 # 主逻辑
 case "$1" in
     up)
-        do_up
+        check_config
+        echo "启动 WireGuard 隧道: $IFACE"
+        start_wireguard_go
+        configure_interface
+        echo "✅ 隧道启动成功"
         ;;
     down)
-        do_down
+        stop_tunnel
         ;;
     restart)
-        do_restart
+        stop_tunnel
+        sleep 1
+        check_config
+        echo "启动 WireGuard 隧道: $IFACE"
+        start_wireguard_go
+        configure_interface
+        echo "✅ 隧道重启成功"
         ;;
     status)
-        do_status
+        show_status
         ;;
     *)
         echo "用法: $0 {up|down|restart|status} [接口名]"
@@ -237,6 +424,8 @@ case "$1" in
         echo "  $0 down wg1        # 停止 wg1"
         echo "  $0 restart         # 重启 wg0"
         echo "  $0 status          # 查看 wg0 状态"
+        echo ""
+        echo "注意：此脚本使用纯 POSIX shell 实现，兼容 macOS Bash 3.2"
         exit 1
         ;;
 esac

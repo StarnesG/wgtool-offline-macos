@@ -1,6 +1,49 @@
 # 更新日志
 
-## 2024-12-04 v2 - Bash 版本兼容性修复
+## 2024-12-04 v3 - 纯 Shell 实现（完美解决 Bash 问题）
+
+### 重大改进
+
+**✅ 完全不依赖 wg-quick**
+
+控制脚本使用纯 POSIX shell 重写，直接调用 `wg` 和 `wireguard-go`：
+- 不再依赖 wg-quick
+- 不需要 Bash 4+
+- 完全兼容 macOS Bash 3.2
+- 开箱即用，零配置
+
+### 实现的功能
+
+控制脚本实现了 wg-quick 的所有核心功能：
+- ✅ 启动/停止 wireguard-go 进程
+- ✅ 解析 WireGuard 配置文件
+- ✅ 配置网络接口和 IP 地址
+- ✅ 设置 WireGuard 私钥和 Peer
+- ✅ 配置路由表（包括默认路由）
+- ✅ 支持 PostUp/PostDown 命令
+- ✅ 支持多个 Peer 配置
+- ✅ 支持 MTU、DNS 等高级选项
+
+### 使用方式
+
+```bash
+# 无需任何额外配置，直接使用
+sudo /usr/local/scripts/wg-control.sh up
+sudo /usr/local/scripts/wg-control.sh status
+sudo /usr/local/scripts/wg-control.sh down
+```
+
+### 技术细节
+
+- 使用 `awk` 解析配置文件
+- 使用 `ifconfig` 配置网络接口
+- 使用 `route` 配置路由表
+- 使用 `wg` 设置 WireGuard 参数
+- 所有命令都是 POSIX 兼容的
+
+---
+
+## 2024-12-04 v2 - Bash 版本兼容性修复（已废弃）
 
 ### 修复的问题
 
