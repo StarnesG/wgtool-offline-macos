@@ -126,6 +126,16 @@ sudo wg-uninstall
 
 ## 故障排查
 
+### 快速诊断
+
+```bash
+sudo /usr/local/scripts/wg-control.sh diag
+```
+
+详细指南：[TROUBLESHOOTING.md](TROUBLESHOOTING.md)
+
+---
+
 ### Bash 版本问题
 
 **✅ 已解决**：控制脚本使用纯 POSIX shell 实现，不依赖 wg-quick。

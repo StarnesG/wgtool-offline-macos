@@ -147,10 +147,32 @@ WIREGUARD_GO="/usr/local/bin/wireguard-go"
 
 # 检查是否以 root 运行
 if [ "$(id -u)" -ne 0 ]; then
-    echo "错误：此脚本需要 root 权限" >&2
+    echo "❌ 错误：此脚本需要 root 权限" >&2
     echo "请使用: sudo $0 $*" >&2
     exit 1
 fi
+
+# 检查必要的命令是否存在
+check_commands() {
+    local missing=""
+    
+    if [ ! -x "$WG" ]; then
+        missing="$missing wg"
+    fi
+    
+    if [ ! -x "$WIREGUARD_GO" ]; then
+        missing="$missing wireguard-go"
+    fi
+    
+    if [ -n "$missing" ]; then
+        echo "❌ 错误：缺少必要的命令:$missing" >&2
+        echo "请确保已正确安装 WireGuard 工具" >&2
+        echo "安装路径:" >&2
+        echo "  wg: $WG" >&2
+        echo "  wireguard-go: $WIREGUARD_GO" >&2
+        exit 1
+    fi
+}
 
 # 检查配置文件
 check_config() {
@@ -182,130 +204,230 @@ start_wireguard_go() {
     # 检查是否已经运行
     if pgrep -f "wireguard-go $IFACE" >/dev/null 2>&1; then
         echo "wireguard-go 已在运行"
-        return 0
+        # 检查接口是否存在
+        if ifconfig "$IFACE" >/dev/null 2>&1; then
+            return 0
+        else
+            echo "接口不存在，停止旧进程..."
+            pkill -f "wireguard-go $IFACE" 2>/dev/null || true
+            sleep 1
+        fi
     fi
     
-    # 启动 wireguard-go（后台运行）
-    "$WIREGUARD_GO" "$IFACE" >/dev/null 2>&1 &
+    # 创建日志目录
+    LOG_DIR="/var/log"
+    LOG_FILE="$LOG_DIR/wireguard-$IFACE.log"
+    
+    # 启动 wireguard-go（后台运行，输出到日志）
+    echo "执行: $WIREGUARD_GO $IFACE"
+    "$WIREGUARD_GO" "$IFACE" >"$LOG_FILE" 2>&1 &
+    WG_PID=$!
+    
+    echo "wireguard-go 进程 PID: $WG_PID"
     
     # 等待接口创建
-    local count=0
-    while [ $count -lt 10 ]; do
+    count=0
+    while [ $count -lt 20 ]; do
         if ifconfig "$IFACE" >/dev/null 2>&1; then
-            echo "接口 $IFACE 已创建"
+            echo "✅ 接口 $IFACE 已创建"
             return 0
         fi
+        
+        # 检查进程是否还在运行
+        if ! kill -0 $WG_PID 2>/dev/null; then
+            echo "❌ wireguard-go 进程已退出" >&2
+            echo "查看日志: cat $LOG_FILE" >&2
+            if [ -f "$LOG_FILE" ]; then
+                echo "最后几行日志:" >&2
+                tail -5 "$LOG_FILE" >&2
+            fi
+            return 1
+        fi
+        
         sleep 0.5
         count=$((count + 1))
     done
     
-    echo "错误：接口创建超时" >&2
+    echo "❌ 错误：接口创建超时" >&2
+    echo "wireguard-go 进程仍在运行，但接口未创建" >&2
+    echo "查看日志: cat $LOG_FILE" >&2
+    if [ -f "$LOG_FILE" ]; then
+        echo "最后几行日志:" >&2
+        tail -10 "$LOG_FILE" >&2
+    fi
+    
+    # 清理
+    pkill -f "wireguard-go $IFACE" 2>/dev/null || true
     return 1
 }
 
 # 配置接口
 configure_interface() {
     echo "配置接口 $IFACE..."
+    echo ""
     
     parse_config
     
     # 设置私钥
     if [ -n "$PRIVATE_KEY" ]; then
-        echo "$PRIVATE_KEY" | "$WG" set "$IFACE" private-key /dev/stdin
+        echo "  设置私钥..."
+        if ! echo "$PRIVATE_KEY" | "$WG" set "$IFACE" private-key /dev/stdin 2>/dev/null; then
+            echo "  ❌ 设置私钥失败" >&2
+            return 1
+        fi
     else
-        echo "错误：配置文件中未找到 PrivateKey" >&2
+        echo "  ❌ 错误：配置文件中未找到 PrivateKey" >&2
         return 1
     fi
     
     # 设置监听端口
     if [ -n "$LISTEN_PORT" ]; then
-        "$WG" set "$IFACE" listen-port "$LISTEN_PORT"
+        echo "  设置监听端口: $LISTEN_PORT"
+        "$WG" set "$IFACE" listen-port "$LISTEN_PORT" 2>/dev/null || true
     fi
     
     # 配置 IP 地址
     if [ -n "$ADDRESS" ]; then
+        echo "  配置 IP 地址..."
         # 处理多个地址（用逗号分隔）
         echo "$ADDRESS" | tr ',' '\n' | while read -r addr; do
             addr=$(echo "$addr" | tr -d ' ')
             if [ -n "$addr" ]; then
-                echo "设置地址: $addr"
-                ifconfig "$IFACE" inet "$addr" "$addr" alias 2>/dev/null || \
-                ifconfig "$IFACE" "$addr" up
+                echo "    添加地址: $addr"
+                # macOS 使用 inet 命令配置 IP
+                if ! ifconfig "$IFACE" inet "$addr" "$addr" alias 2>/dev/null; then
+                    # 如果失败，尝试简单方式
+                    ifconfig "$IFACE" "$addr" up 2>/dev/null || true
+                fi
             fi
         done
+    else
+        echo "  ⚠️  警告：未配置 IP 地址"
     fi
     
     # 设置 MTU
     if [ -n "$MTU" ]; then
-        ifconfig "$IFACE" mtu "$MTU"
+        echo "  设置 MTU: $MTU"
+        ifconfig "$IFACE" mtu "$MTU" 2>/dev/null || true
     fi
     
     # 配置 Peer
-    configure_peers
+    echo "  配置 Peer..."
+    if ! configure_peers; then
+        echo "  ❌ Peer 配置失败" >&2
+        return 1
+    fi
     
     # 启动接口
-    ifconfig "$IFACE" up
+    echo "  启动接口..."
+    if ! ifconfig "$IFACE" up 2>/dev/null; then
+        echo "  ❌ 接口启动失败" >&2
+        return 1
+    fi
     
     # 配置路由
+    echo "  配置路由..."
     configure_routes
     
     # 配置 DNS
     if [ -n "$DNS" ]; then
+        echo "  配置 DNS: $DNS"
         configure_dns
     fi
     
     # 执行 PostUp 命令
     if [ -n "$POST_UP" ]; then
-        echo "执行 PostUp 命令..."
-        eval "$POST_UP"
+        echo "  执行 PostUp 命令..."
+        eval "$POST_UP" 2>/dev/null || true
     fi
+    
+    echo ""
+    return 0
 }
 
 # 配置 Peer
 configure_peers() {
-    # 提取所有 Peer 配置
-    awk '/^\[Peer\]/ {peer=1; next} 
-         /^\[/ {peer=0} 
-         peer && /^[A-Za-z]/ {print}' "$CONF" | \
+    local peer_count=0
+    local temp_file="/tmp/wg-peers-$$"
+    
+    # 提取所有 Peer 配置到临时文件
+    awk '/^\[Peer\]/ {
+        if (peer_key != "") {
+            print "PEER_KEY=" peer_key
+            print "ENDPOINT=" endpoint
+            print "ALLOWED_IPS=" allowed_ips
+            print "KEEPALIVE=" keepalive
+            print "PRESHARED=" preshared
+            print "---"
+        }
+        peer_key=""; endpoint=""; allowed_ips=""; keepalive=""; preshared=""
+        next
+    }
+    /^\[/ {next}
+    /^PublicKey/ {peer_key=$3}
+    /^Endpoint/ {endpoint=$3}
+    /^AllowedIPs/ {sub(/^AllowedIPs[[:space:]]*=[[:space:]]*/, ""); allowed_ips=$0}
+    /^PersistentKeepalive/ {keepalive=$3}
+    /^PresharedKey/ {preshared=$3}
+    END {
+        if (peer_key != "") {
+            print "PEER_KEY=" peer_key
+            print "ENDPOINT=" endpoint
+            print "ALLOWED_IPS=" allowed_ips
+            print "KEEPALIVE=" keepalive
+            print "PRESHARED=" preshared
+        }
+    }' "$CONF" > "$temp_file"
+    
+    # 读取并配置每个 Peer
     while IFS= read -r line; do
-        case "$line" in
-            PublicKey*)
-                PEER_KEY=$(echo "$line" | awk '{print $3}')
-                ;;
-            Endpoint*)
-                ENDPOINT=$(echo "$line" | awk '{print $3}')
-                ;;
-            AllowedIPs*)
-                ALLOWED_IPS=$(echo "$line" | cut -d'=' -f2 | tr -d ' ')
-                ;;
-            PersistentKeepalive*)
-                KEEPALIVE=$(echo "$line" | awk '{print $3}')
-                ;;
-            PresharedKey*)
-                PRESHARED=$(echo "$line" | awk '{print $3}')
-                ;;
-        esac
-        
-        # 当读取到下一个 Peer 或文件结束时，配置当前 Peer
-        if [ -n "$PEER_KEY" ] && [ -n "$ALLOWED_IPS" ]; then
-            echo "配置 Peer: $PEER_KEY"
-            
-            CMD="$WG set $IFACE peer $PEER_KEY"
-            [ -n "$ENDPOINT" ] && CMD="$CMD endpoint $ENDPOINT"
-            [ -n "$ALLOWED_IPS" ] && CMD="$CMD allowed-ips $ALLOWED_IPS"
-            [ -n "$KEEPALIVE" ] && CMD="$CMD persistent-keepalive $KEEPALIVE"
-            [ -n "$PRESHARED" ] && echo "$PRESHARED" | $WG set "$IFACE" peer "$PEER_KEY" preshared-key /dev/stdin
-            
-            eval "$CMD"
-            
-            # 重置变量
-            PEER_KEY=""
-            ENDPOINT=""
-            ALLOWED_IPS=""
-            KEEPALIVE=""
-            PRESHARED=""
+        if [ "$line" = "---" ] || [ -z "$line" ]; then
+            # 配置当前 Peer
+            if [ -n "$PEER_KEY" ] && [ -n "$ALLOWED_IPS" ]; then
+                peer_count=$((peer_count + 1))
+                echo "    Peer $peer_count: ${PEER_KEY:0:16}..."
+                
+                CMD="$WG set $IFACE peer $PEER_KEY"
+                [ -n "$ENDPOINT" ] && CMD="$CMD endpoint $ENDPOINT" && echo "      Endpoint: $ENDPOINT"
+                [ -n "$ALLOWED_IPS" ] && CMD="$CMD allowed-ips $ALLOWED_IPS" && echo "      AllowedIPs: $ALLOWED_IPS"
+                [ -n "$KEEPALIVE" ] && CMD="$CMD persistent-keepalive $KEEPALIVE"
+                
+                if ! eval "$CMD" 2>/dev/null; then
+                    echo "      ❌ Peer 配置失败" >&2
+                    rm -f "$temp_file"
+                    return 1
+                fi
+                
+                if [ -n "$PRESHARED" ]; then
+                    echo "$PRESHARED" | "$WG" set "$IFACE" peer "$PEER_KEY" preshared-key /dev/stdin 2>/dev/null || true
+                fi
+                
+                # 重置变量
+                PEER_KEY=""
+                ENDPOINT=""
+                ALLOWED_IPS=""
+                KEEPALIVE=""
+                PRESHARED=""
+            fi
+        else
+            # 解析配置行
+            case "$line" in
+                PEER_KEY=*) PEER_KEY="${line#PEER_KEY=}" ;;
+                ENDPOINT=*) ENDPOINT="${line#ENDPOINT=}" ;;
+                ALLOWED_IPS=*) ALLOWED_IPS="${line#ALLOWED_IPS=}" ;;
+                KEEPALIVE=*) KEEPALIVE="${line#KEEPALIVE=}" ;;
+                PRESHARED=*) PRESHARED="${line#PRESHARED=}" ;;
+            esac
         fi
-    done
+    done < "$temp_file"
+    
+    rm -f "$temp_file"
+    
+    if [ $peer_count -eq 0 ]; then
+        echo "    ⚠️  警告：未找到 Peer 配置"
+    fi
+    
+    return 0
 }
 
 # 配置路由
@@ -395,11 +517,34 @@ show_status() {
 # 主逻辑
 case "$1" in
     up)
+        check_commands
         check_config
         echo "启动 WireGuard 隧道: $IFACE"
-        start_wireguard_go
-        configure_interface
+        echo ""
+        
+        if ! start_wireguard_go; then
+            echo "" >&2
+            echo "❌ wireguard-go 启动失败" >&2
+            echo "" >&2
+            echo "故障排查步骤:" >&2
+            echo "1. 检查 wireguard-go 是否存在: ls -l $WIREGUARD_GO" >&2
+            echo "2. 手动测试启动: sudo $WIREGUARD_GO $IFACE" >&2
+            echo "3. 查看系统日志: log show --predicate 'process == \"wireguard-go\"' --last 5m" >&2
+            echo "4. 检查权限: ls -l /dev/utun*" >&2
+            exit 1
+        fi
+        
+        if ! configure_interface; then
+            echo "" >&2
+            echo "❌ 接口配置失败" >&2
+            stop_tunnel
+            exit 1
+        fi
+        
+        echo ""
         echo "✅ 隧道启动成功"
+        echo ""
+        echo "查看状态: sudo $0 status"
         ;;
     down)
         stop_tunnel
@@ -416,14 +561,65 @@ case "$1" in
     status)
         show_status
         ;;
+    diag|diagnose)
+        echo "=== WireGuard 诊断信息 ==="
+        echo ""
+        echo "1. 命令检查:"
+        echo "   wg: $([ -x "$WG" ] && echo "✅ 存在" || echo "❌ 不存在") ($WG)"
+        echo "   wireguard-go: $([ -x "$WIREGUARD_GO" ] && echo "✅ 存在" || echo "❌ 不存在") ($WIREGUARD_GO)"
+        echo ""
+        echo "2. 配置文件:"
+        echo "   路径: $CONF"
+        echo "   状态: $([ -f "$CONF" ] && echo "✅ 存在" || echo "❌ 不存在")"
+        if [ -f "$CONF" ]; then
+            echo "   权限: $(ls -l "$CONF" | awk '{print $1, $3, $4}')"
+        fi
+        echo ""
+        echo "3. 进程状态:"
+        if pgrep -f "wireguard-go" >/dev/null 2>&1; then
+            echo "   wireguard-go 进程:"
+            ps aux | grep "[w]ireguard-go" | awk '{print "   PID:", $2, "CMD:", $11, $12}'
+        else
+            echo "   wireguard-go: ❌ 未运行"
+        fi
+        echo ""
+        echo "4. 网络接口:"
+        if ifconfig | grep -q "^$IFACE:"; then
+            echo "   $IFACE: ✅ 存在"
+            ifconfig "$IFACE" | head -5 | sed 's/^/   /'
+        else
+            echo "   $IFACE: ❌ 不存在"
+        fi
+        echo ""
+        echo "5. utun 设备:"
+        ls -l /dev/utun* 2>/dev/null | sed 's/^/   /' || echo "   无 utun 设备"
+        echo ""
+        echo "6. 日志文件:"
+        LOG_FILE="/var/log/wireguard-$IFACE.log"
+        if [ -f "$LOG_FILE" ]; then
+            echo "   路径: $LOG_FILE"
+            echo "   最后 5 行:"
+            tail -5 "$LOG_FILE" | sed 's/^/   /'
+        else
+            echo "   日志文件不存在: $LOG_FILE"
+        fi
+        ;;
     *)
-        echo "用法: $0 {up|down|restart|status} [接口名]"
+        echo "用法: $0 {up|down|restart|status|diag} [接口名]"
+        echo ""
+        echo "命令:"
+        echo "  up              启动隧道"
+        echo "  down            停止隧道"
+        echo "  restart         重启隧道"
+        echo "  status          查看状态"
+        echo "  diag            诊断信息"
         echo ""
         echo "示例:"
         echo "  $0 up              # 启动 wg0"
         echo "  $0 down wg1        # 停止 wg1"
         echo "  $0 restart         # 重启 wg0"
         echo "  $0 status          # 查看 wg0 状态"
+        echo "  $0 diag            # 显示诊断信息"
         echo ""
         echo "注意：此脚本使用纯 POSIX shell 实现，兼容 macOS Bash 3.2"
         exit 1

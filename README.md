@@ -282,6 +282,18 @@ sudo rm -rf /usr/local/etc/wireguard
 
 ## 故障排查
 
+### 快速诊断
+
+运行诊断命令查看系统状态：
+
+```bash
+sudo /usr/local/scripts/wg-control.sh diag
+```
+
+**详细故障排查指南**：[TROUBLESHOOTING.md](TROUBLESHOOTING.md) ⭐
+
+---
+
 ### Bash 版本问题
 
 #### wg-quick: Version mismatch: bash 3 detected
