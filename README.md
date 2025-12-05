@@ -139,6 +139,8 @@ sudo launchctl load -w /Library/LaunchDaemons/com.wireguard.offline.plist
 
 ```bash
 sudo nano /usr/local/etc/wireguard/wg0.conf
+sudo cp ./wg0.conf /usr/local/etc/wireguard/wg0.conf
+sudo chmod 600 /usr/local/etc/wireguard/wg0.conf
 ```
 
 配置文件示例：

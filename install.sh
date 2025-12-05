@@ -5,6 +5,7 @@ set -e
 
 TAR=$(dirname "$0")/wireguard-tools-macos-universal.tar.gz
 [[ -f $TAR ]] || { echo "离线包 $TAR 不存在"; exit 1; }
+mkdir -p /usr/local/bin /usr/local/etc/wireguard
 
 # 1. 解压到临时目录
 TMPDIR=$(mktemp -d)

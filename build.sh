@@ -3,8 +3,8 @@
 set -e
 
 # 版本配置（可根据需要修改）
-WG_TOOLS_VERSION="${WG_TOOLS_VERSION:-v1.0.20210914}"
-WG_GO_VERSION="${WG_GO_VERSION:-0.0.20230223}"
+WG_TOOLS_VERSION="${WG_TOOLS_VERSION:-v1.0.20250521}"
+WG_GO_VERSION="${WG_GO_VERSION:-0.0.20250522}"
 
 echo "==> 构建配置："
 echo "    wireguard-tools: $WG_TOOLS_VERSION"
