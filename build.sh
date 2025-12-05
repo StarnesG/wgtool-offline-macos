@@ -233,11 +233,17 @@ start_wireguard_go() {
     
     # 在 macOS 上，wireguard-go 需要使用 utun 接口名
     # 不指定接口名，让它自动分配
+    # 设置环境变量让 wireguard-go 在后台运行
     echo "执行: $WIREGUARD_GO utun"
-    "$WIREGUARD_GO" utun >"$LOG_FILE" 2>&1 &
+    
+    # 使用 nohup 确保进程在后台持续运行
+    nohup "$WIREGUARD_GO" utun >"$LOG_FILE" 2>&1 &
     WG_PID=$!
     
     echo "wireguard-go 进程 PID: $WG_PID"
+    
+    # 等待一下让进程初始化
+    sleep 1
     
     # 等待接口创建并获取接口名
     count=0
@@ -246,16 +252,26 @@ start_wireguard_go() {
         if ! kill -0 $WG_PID 2>/dev/null; then
             echo "❌ wireguard-go 进程已退出" >&2
             echo "查看日志: cat $LOG_FILE" >&2
-            if [ -f "$LOG_FILE" ]; then
-                echo "最后几行日志:" >&2
-                tail -5 "$LOG_FILE" >&2
+            if [ -f "$LOG_FILE" ] && [ -s "$LOG_FILE" ]; then
+                echo "日志内容:" >&2
+                cat "$LOG_FILE" >&2
+            else
+                echo "日志文件为空或不存在" >&2
+                echo "" >&2
+                echo "可能的原因:" >&2
+                echo "1. wireguard-go 权限问题" >&2
+                echo "2. 缺少依赖库" >&2
+                echo "3. 二进制文件损坏" >&2
+                echo "" >&2
+                echo "尝试手动运行查看错误:" >&2
+                echo "  sudo $WIREGUARD_GO utun" >&2
             fi
             return 1
         fi
         
-        # 从日志中提取接口名
-        if [ -f "$LOG_FILE" ]; then
-            IFACE=$(grep -o "utun[0-9]*" "$LOG_FILE" 2>/dev/null | head -1)
+        # 方式 1：从日志中提取接口名
+        if [ -f "$LOG_FILE" ] && [ -s "$LOG_FILE" ]; then
+            IFACE=$(grep -oE "utun[0-9]+" "$LOG_FILE" 2>/dev/null | head -1)
             if [ -n "$IFACE" ] && ifconfig "$IFACE" >/dev/null 2>&1; then
                 echo "✅ 接口 $IFACE 已创建"
                 # 保存接口名到状态文件
@@ -263,6 +279,18 @@ start_wireguard_go() {
                 return 0
             fi
         fi
+        
+        # 方式 2：查找新创建的 utun 接口
+        # 获取所有 utun 接口，找到最新的
+        for iface in $(ifconfig | grep "^utun" | cut -d: -f1 | sort -V | tail -5); do
+            # 检查这个接口是否属于我们的进程
+            if pgrep -f "wireguard-go.*$iface" >/dev/null 2>&1; then
+                IFACE="$iface"
+                echo "✅ 接口 $IFACE 已创建（通过进程检测）"
+                echo "$IFACE" > "$STATE_FILE"
+                return 0
+            fi
+        done
         
         sleep 0.5
         count=$((count + 1))
@@ -625,6 +653,16 @@ case "$1" in
     status)
         show_status
         ;;
+    test)
+        echo "=== 测试 wireguard-go ==="
+        echo ""
+        echo "手动启动 wireguard-go（前台模式）..."
+        echo "按 Ctrl+C 停止"
+        echo ""
+        echo "执行: $WIREGUARD_GO utun"
+        echo ""
+        "$WIREGUARD_GO" utun
+        ;;
     diag|diagnose)
         echo "=== WireGuard 诊断信息 ==="
         echo ""
@@ -688,7 +726,7 @@ case "$1" in
         fi
         ;;
     *)
-        echo "用法: $0 {up|down|restart|status|diag} [接口名]"
+        echo "用法: $0 {up|down|restart|status|diag|test} [接口名]"
         echo ""
         echo "命令:"
         echo "  up              启动隧道"
@@ -696,6 +734,7 @@ case "$1" in
         echo "  restart         重启隧道"
         echo "  status          查看状态"
         echo "  diag            诊断信息"
+        echo "  test            测试 wireguard-go（前台模式）"
         echo ""
         echo "示例:"
         echo "  $0 up              # 启动 wg0"
@@ -703,6 +742,7 @@ case "$1" in
         echo "  $0 restart         # 重启 wg0"
         echo "  $0 status          # 查看 wg0 状态"
         echo "  $0 diag            # 显示诊断信息"
+        echo "  $0 test            # 测试 wireguard-go"
         echo ""
         echo "注意：此脚本使用纯 POSIX shell 实现，兼容 macOS Bash 3.2"
         exit 1

@@ -26,6 +26,8 @@ sudo /usr/local/scripts/wg-control.sh up wg0
 
 ## 快速诊断
 
+### 诊断命令
+
 运行诊断命令查看系统状态：
 
 ```bash
@@ -39,6 +41,18 @@ sudo /usr/local/scripts/wg-control.sh diag
 - 进程运行情况
 - 网络接口状态
 - 日志信息
+
+### 测试 wireguard-go
+
+如果 wireguard-go 启动失败，使用测试命令：
+
+```bash
+sudo /usr/local/scripts/wg-control.sh test
+```
+
+这会在前台运行 wireguard-go，显示详细错误信息。
+
+**详细的 wireguard-go 问题诊断**：[WIREGUARD_GO_ISSUES.md](WIREGUARD_GO_ISSUES.md) ⭐
 
 ---
 
