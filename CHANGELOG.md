@@ -1,5 +1,65 @@
 # 更新日志
 
+## 2024-12-05 v5 - 修复 macOS 接口命名问题
+
+### 重大修复
+
+**✅ 修复接口命名错误**
+
+macOS 上 wireguard-go 要求接口名必须是 `utun[0-9]*` 格式，不能使用 `wg0`。
+
+**错误信息**：
+```
+ERROR: Failed to create TUN device: Interface name must be utun[0-9]*
+```
+
+**解决方案**：
+- 让 wireguard-go 自动分配 `utun` 接口名
+- 使用状态文件记录配置名到接口名的映射
+- 控制脚本自动处理接口名转换
+
+### 实现细节
+
+1. **配置文件名**：保持使用 `wg0.conf`、`wg1.conf`
+2. **实际接口名**：系统自动分配 `utun3`、`utun4` 等
+3. **状态文件**：`/var/run/wireguard/wg0.name` 记录实际接口名
+4. **透明映射**：用户仍然使用 `wg0` 作为配置名
+
+### 使用方式
+
+```bash
+# 配置文件
+sudo nano /usr/local/etc/wireguard/wg0.conf
+
+# 启动（使用配置名）
+sudo /usr/local/scripts/wg-control.sh up wg0
+
+# 实际创建的接口是 utun3（自动分配）
+# 查看状态
+sudo /usr/local/scripts/wg-control.sh status wg0
+
+# 输出：
+# WireGuard 隧道 wg0 状态 (接口: utun3):
+# interface: utun3
+# ...
+```
+
+### 改进的诊断
+
+诊断命令现在显示配置名和实际接口名的映射：
+
+```bash
+sudo /usr/local/scripts/wg-control.sh diag
+
+# 输出：
+# 4. 接口状态:
+#    配置名: wg0
+#    接口名: utun3
+#    状态: ✅ 运行中
+```
+
+---
+
 ## 2024-12-05 v4 - 改进错误处理和诊断
 
 ### 新增功能

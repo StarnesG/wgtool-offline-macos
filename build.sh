@@ -140,10 +140,15 @@ cat > "$DEST/scripts/wg-control.sh" <<'EOF'
 set -e
 
 CONF_DIR="/usr/local/etc/wireguard"
-IFACE="${2:-wg0}"
-CONF="$CONF_DIR/$IFACE.conf"
+CONFIG_NAME="${2:-wg0}"
+CONF="$CONF_DIR/$CONFIG_NAME.conf"
 WG="/usr/local/bin/wg"
 WIREGUARD_GO="/usr/local/bin/wireguard-go"
+STATE_DIR="/var/run/wireguard"
+STATE_FILE="$STATE_DIR/$CONFIG_NAME.name"
+
+# 实际的接口名（macOS 上是 utunX）
+IFACE=""
 
 # 检查是否以 root 运行
 if [ "$(id -u)" -ne 0 ]; then
@@ -201,38 +206,42 @@ parse_config() {
 start_wireguard_go() {
     echo "启动 wireguard-go..."
     
+    # 创建状态目录
+    mkdir -p "$STATE_DIR" 2>/dev/null || true
+    
     # 检查是否已经运行
-    if pgrep -f "wireguard-go $IFACE" >/dev/null 2>&1; then
-        echo "wireguard-go 已在运行"
-        # 检查接口是否存在
-        if ifconfig "$IFACE" >/dev/null 2>&1; then
-            return 0
+    if [ -f "$STATE_FILE" ]; then
+        IFACE=$(cat "$STATE_FILE")
+        if [ -n "$IFACE" ] && pgrep -f "wireguard-go $IFACE" >/dev/null 2>&1; then
+            echo "wireguard-go 已在运行，接口: $IFACE"
+            if ifconfig "$IFACE" >/dev/null 2>&1; then
+                return 0
+            else
+                echo "接口不存在，停止旧进程..."
+                pkill -f "wireguard-go $IFACE" 2>/dev/null || true
+                rm -f "$STATE_FILE"
+                sleep 1
+            fi
         else
-            echo "接口不存在，停止旧进程..."
-            pkill -f "wireguard-go $IFACE" 2>/dev/null || true
-            sleep 1
+            rm -f "$STATE_FILE"
         fi
     fi
     
     # 创建日志目录
     LOG_DIR="/var/log"
-    LOG_FILE="$LOG_DIR/wireguard-$IFACE.log"
+    LOG_FILE="$LOG_DIR/wireguard-$CONFIG_NAME.log"
     
-    # 启动 wireguard-go（后台运行，输出到日志）
-    echo "执行: $WIREGUARD_GO $IFACE"
-    "$WIREGUARD_GO" "$IFACE" >"$LOG_FILE" 2>&1 &
+    # 在 macOS 上，wireguard-go 需要使用 utun 接口名
+    # 不指定接口名，让它自动分配
+    echo "执行: $WIREGUARD_GO utun"
+    "$WIREGUARD_GO" utun >"$LOG_FILE" 2>&1 &
     WG_PID=$!
     
     echo "wireguard-go 进程 PID: $WG_PID"
     
-    # 等待接口创建
+    # 等待接口创建并获取接口名
     count=0
     while [ $count -lt 20 ]; do
-        if ifconfig "$IFACE" >/dev/null 2>&1; then
-            echo "✅ 接口 $IFACE 已创建"
-            return 0
-        fi
-        
         # 检查进程是否还在运行
         if ! kill -0 $WG_PID 2>/dev/null; then
             echo "❌ wireguard-go 进程已退出" >&2
@@ -242,6 +251,17 @@ start_wireguard_go() {
                 tail -5 "$LOG_FILE" >&2
             fi
             return 1
+        fi
+        
+        # 从日志中提取接口名
+        if [ -f "$LOG_FILE" ]; then
+            IFACE=$(grep -o "utun[0-9]*" "$LOG_FILE" 2>/dev/null | head -1)
+            if [ -n "$IFACE" ] && ifconfig "$IFACE" >/dev/null 2>&1; then
+                echo "✅ 接口 $IFACE 已创建"
+                # 保存接口名到状态文件
+                echo "$IFACE" > "$STATE_FILE"
+                return 0
+            fi
         fi
         
         sleep 0.5
@@ -257,7 +277,7 @@ start_wireguard_go() {
     fi
     
     # 清理
-    pkill -f "wireguard-go $IFACE" 2>/dev/null || true
+    kill $WG_PID 2>/dev/null || true
     return 1
 }
 
@@ -471,7 +491,17 @@ configure_dns() {
 
 # 停止隧道
 stop_tunnel() {
-    echo "停止 WireGuard 隧道: $IFACE"
+    # 获取实际的接口名
+    if [ -f "$STATE_FILE" ]; then
+        IFACE=$(cat "$STATE_FILE")
+    fi
+    
+    if [ -z "$IFACE" ]; then
+        echo "未找到运行中的隧道: $CONFIG_NAME"
+        return 0
+    fi
+    
+    echo "停止 WireGuard 隧道: $CONFIG_NAME (接口: $IFACE)"
     
     # 执行 PostDown 命令
     if [ -f "$CONF" ]; then
@@ -483,12 +513,14 @@ stop_tunnel() {
     fi
     
     # 删除路由
-    awk '/^\[Peer\]/,/^\[/ {if(/^AllowedIPs/) print $3}' "$CONF" 2>/dev/null | tr ',' '\n' | while read -r ip; do
-        ip=$(echo "$ip" | tr -d ' ')
-        if [ -n "$ip" ] && [ "$ip" != "0.0.0.0/0" ]; then
-            route delete -net "$ip" 2>/dev/null || true
-        fi
-    done
+    if [ -f "$CONF" ]; then
+        awk '/^\[Peer\]/,/^\[/ {if(/^AllowedIPs/) print $3}' "$CONF" 2>/dev/null | tr ',' '\n' | while read -r ip; do
+            ip=$(echo "$ip" | tr -d ' ')
+            if [ -n "$ip" ] && [ "$ip" != "0.0.0.0/0" ]; then
+                route delete -net "$ip" 2>/dev/null || true
+            fi
+        done
+    fi
     
     # 删除默认路由
     route delete -net 0.0.0.0/1 2>/dev/null || true
@@ -500,16 +532,29 @@ stop_tunnel() {
     # 停止 wireguard-go
     pkill -f "wireguard-go $IFACE" 2>/dev/null || true
     
+    # 清理状态文件
+    rm -f "$STATE_FILE"
+    
     echo "隧道已停止"
 }
 
 # 显示状态
 show_status() {
+    # 获取实际的接口名
+    if [ -f "$STATE_FILE" ]; then
+        IFACE=$(cat "$STATE_FILE")
+    fi
+    
+    if [ -z "$IFACE" ]; then
+        echo "WireGuard 隧道 $CONFIG_NAME 未运行"
+        exit 1
+    fi
+    
     if "$WG" show "$IFACE" >/dev/null 2>&1; then
-        echo "WireGuard 隧道 $IFACE 状态:"
+        echo "WireGuard 隧道 $CONFIG_NAME 状态 (接口: $IFACE):"
         "$WG" show "$IFACE"
     else
-        echo "WireGuard 隧道 $IFACE 未运行"
+        echo "WireGuard 隧道 $CONFIG_NAME 未运行"
         exit 1
     fi
 }
@@ -519,7 +564,7 @@ case "$1" in
     up)
         check_commands
         check_config
-        echo "启动 WireGuard 隧道: $IFACE"
+        echo "启动 WireGuard 隧道: $CONFIG_NAME"
         echo ""
         
         if ! start_wireguard_go; then
@@ -528,9 +573,9 @@ case "$1" in
             echo "" >&2
             echo "故障排查步骤:" >&2
             echo "1. 检查 wireguard-go 是否存在: ls -l $WIREGUARD_GO" >&2
-            echo "2. 手动测试启动: sudo $WIREGUARD_GO $IFACE" >&2
-            echo "3. 查看系统日志: log show --predicate 'process == \"wireguard-go\"' --last 5m" >&2
-            echo "4. 检查权限: ls -l /dev/utun*" >&2
+            echo "2. 手动测试启动: sudo $WIREGUARD_GO utun" >&2
+            echo "3. 查看日志: cat /var/log/wireguard-$CONFIG_NAME.log" >&2
+            echo "4. 查看系统日志: log show --predicate 'process == \"wireguard-go\"' --last 5m" >&2
             exit 1
         fi
         
@@ -543,6 +588,8 @@ case "$1" in
         
         echo ""
         echo "✅ 隧道启动成功"
+        echo "   配置: $CONFIG_NAME"
+        echo "   接口: $IFACE"
         echo ""
         echo "查看状态: sudo $0 status"
         ;;
@@ -552,11 +599,28 @@ case "$1" in
     restart)
         stop_tunnel
         sleep 1
+        check_commands
         check_config
-        echo "启动 WireGuard 隧道: $IFACE"
-        start_wireguard_go
-        configure_interface
+        echo "启动 WireGuard 隧道: $CONFIG_NAME"
+        echo ""
+        
+        if ! start_wireguard_go; then
+            echo "" >&2
+            echo "❌ wireguard-go 启动失败" >&2
+            exit 1
+        fi
+        
+        if ! configure_interface; then
+            echo "" >&2
+            echo "❌ 接口配置失败" >&2
+            stop_tunnel
+            exit 1
+        fi
+        
+        echo ""
         echo "✅ 隧道重启成功"
+        echo "   配置: $CONFIG_NAME"
+        echo "   接口: $IFACE"
         ;;
     status)
         show_status
@@ -569,6 +633,7 @@ case "$1" in
         echo "   wireguard-go: $([ -x "$WIREGUARD_GO" ] && echo "✅ 存在" || echo "❌ 不存在") ($WIREGUARD_GO)"
         echo ""
         echo "2. 配置文件:"
+        echo "   名称: $CONFIG_NAME"
         echo "   路径: $CONF"
         echo "   状态: $([ -f "$CONF" ] && echo "✅ 存在" || echo "❌ 不存在")"
         if [ -f "$CONF" ]; then
@@ -583,25 +648,43 @@ case "$1" in
             echo "   wireguard-go: ❌ 未运行"
         fi
         echo ""
-        echo "4. 网络接口:"
-        if ifconfig | grep -q "^$IFACE:"; then
-            echo "   $IFACE: ✅ 存在"
-            ifconfig "$IFACE" | head -5 | sed 's/^/   /'
+        echo "4. 接口状态:"
+        if [ -f "$STATE_FILE" ]; then
+            IFACE=$(cat "$STATE_FILE")
+            echo "   配置名: $CONFIG_NAME"
+            echo "   接口名: $IFACE"
+            if ifconfig "$IFACE" >/dev/null 2>&1; then
+                echo "   状态: ✅ 运行中"
+                ifconfig "$IFACE" | head -5 | sed 's/^/   /'
+            else
+                echo "   状态: ❌ 接口不存在"
+            fi
         else
-            echo "   $IFACE: ❌ 不存在"
+            echo "   $CONFIG_NAME: ❌ 未运行"
         fi
         echo ""
-        echo "5. utun 设备:"
-        ls -l /dev/utun* 2>/dev/null | sed 's/^/   /' || echo "   无 utun 设备"
+        echo "5. utun 接口:"
+        if ifconfig | grep -q "^utun"; then
+            ifconfig | grep "^utun" | sed 's/^/   /'
+        else
+            echo "   无 utun 接口"
+        fi
         echo ""
         echo "6. 日志文件:"
-        LOG_FILE="/var/log/wireguard-$IFACE.log"
+        LOG_FILE="/var/log/wireguard-$CONFIG_NAME.log"
         if [ -f "$LOG_FILE" ]; then
             echo "   路径: $LOG_FILE"
             echo "   最后 5 行:"
             tail -5 "$LOG_FILE" | sed 's/^/   /'
         else
             echo "   日志文件不存在: $LOG_FILE"
+        fi
+        echo ""
+        echo "7. 状态文件:"
+        echo "   路径: $STATE_FILE"
+        echo "   状态: $([ -f "$STATE_FILE" ] && echo "✅ 存在" || echo "❌ 不存在")"
+        if [ -f "$STATE_FILE" ]; then
+            echo "   内容: $(cat "$STATE_FILE")"
         fi
         ;;
     *)

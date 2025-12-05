@@ -6,9 +6,17 @@
 
 ✅ **完全兼容 macOS Bash 3.2**：本项目的控制脚本使用纯 POSIX shell 实现，**不依赖 wg-quick**，无需安装 Bash 4+。
 
+⚠️ **macOS 接口命名**：macOS 上 WireGuard 使用 `utun` 接口名（如 `utun3`），不是 `wg0`。控制脚本会自动处理接口名映射。
+
 **推荐使用控制脚本**（开箱即用）：
 ```bash
-sudo /usr/local/scripts/wg-control.sh up
+# 配置文件仍然使用 wg0.conf
+sudo nano /usr/local/etc/wireguard/wg0.conf
+
+# 启动（使用配置名 wg0）
+sudo /usr/local/scripts/wg-control.sh up wg0
+
+# 实际接口名由系统自动分配（如 utun3）
 ```
 
 控制脚本直接调用 `wg` 和 `wireguard-go`，实现了 wg-quick 的核心功能，完全兼容 macOS 默认环境。

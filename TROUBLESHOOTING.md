@@ -1,5 +1,29 @@
 # 故障排查指南
 
+## 重要说明
+
+### macOS 接口命名
+
+⚠️ **重要**：macOS 上 wireguard-go 使用 `utun` 接口名（如 `utun3`、`utun4`），不是 `wg0`。
+
+- **配置文件名**：仍然使用 `wg0.conf`、`wg1.conf` 等
+- **实际接口名**：系统自动分配为 `utun3`、`utun4` 等
+- **控制脚本**：自动处理接口名映射
+
+示例：
+```bash
+# 配置文件
+/usr/local/etc/wireguard/wg0.conf
+
+# 启动后实际接口
+utun3
+
+# 使用控制脚本（自动处理）
+sudo /usr/local/scripts/wg-control.sh up wg0
+```
+
+---
+
 ## 快速诊断
 
 运行诊断命令查看系统状态：
@@ -10,7 +34,8 @@ sudo /usr/local/scripts/wg-control.sh diag
 
 这会显示：
 - 命令是否存在
-- 配置文件状态
+- 配置文件状态（wg0.conf）
+- 实际接口名（utun3）
 - 进程运行情况
 - 网络接口状态
 - 日志信息
@@ -19,7 +44,7 @@ sudo /usr/local/scripts/wg-control.sh diag
 
 ## 常见问题
 
-### 1. 错误：接口创建超时
+### 1. 错误：接口创建超时或接口名错误
 
 **症状**：
 ```
@@ -27,39 +52,46 @@ sudo /usr/local/scripts/wg-control.sh diag
 错误：接口创建超时
 ```
 
-**原因**：
-- wireguard-go 启动失败
-- 权限问题
-- utun 设备不可用
+或
 
-**解决步骤**：
-
-#### 步骤 1：检查 wireguard-go 是否存在
-
-```bash
-ls -l /usr/local/bin/wireguard-go
+```
+ERROR: Failed to create TUN device: Interface name must be utun[0-9]*
 ```
 
-如果不存在，重新安装：
+**原因**：
+- macOS 上 wireguard-go 要求接口名必须是 `utun` 开头加数字
+- 不能使用 `wg0`、`wg1` 等名称
+
+**解决方案**：
+
+✅ **已修复**：最新版本的控制脚本会自动使用 `utun` 接口名。
+
+#### 步骤 1：重新构建和安装
+
 ```bash
+# 重新构建（获取最新修复）
+cd wgtool-offline-macos
+./build.sh
+
+# 重新安装
 sudo ./install.sh
 ```
 
 #### 步骤 2：手动测试 wireguard-go
 
 ```bash
-# 手动启动 wireguard-go
-sudo /usr/local/bin/wireguard-go wg0
+# 正确的方式：让 wireguard-go 自动分配接口名
+sudo /usr/local/bin/wireguard-go utun
 ```
 
 观察输出：
-- 如果成功，会显示接口名称（如 `utun3`）
-- 如果失败，会显示错误信息
+- 成功：会显示类似 `INFO: (utun3) ...`
+- 失败：会显示错误信息
 
 常见错误：
 - `operation not permitted`: 权限问题，确保使用 sudo
 - `address already in use`: 端口被占用
-- `no such device`: utun 设备不可用
+- `Interface name must be utun[0-9]*`: 接口名错误（已修复）
 
 #### 步骤 3：检查 utun 设备
 
